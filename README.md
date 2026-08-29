@@ -32,7 +32,11 @@ cp .env.example .env   # fill in your OpenAI-compatible endpoint credentials
 ## Usage
 
 ```bash
-python -m tenon            # interactive REPL
-python -m tenon -p "create a CLI todo app with tests and run them"
-python -m tenon -c         # resume last session
+python -m tenon                 # interactive REPL (asks before edits/commands)
+python -m tenon --mode auto     # same, with fewer confirmations
+python -m tenon -p "task"       # one-shot, non-interactive
+python -m tenon -c              # resume the last session in this directory
 ```
+
+In the REPL: `/help` lists the slash commands (`/mode /undo /cost /compact /quit`),
+Ctrl+C interrupts the current turn, Ctrl+D exits.
