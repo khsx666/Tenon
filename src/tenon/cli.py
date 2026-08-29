@@ -6,6 +6,7 @@ REPL (prompt_toolkit, interrupts, slash commands) arrives in M6.
 from __future__ import annotations
 
 import argparse
+import tempfile
 from pathlib import Path
 
 from rich.console import Console
@@ -39,6 +40,13 @@ def make_printer(console: Console):
             console.print(f"  [{style}]⎿ {_preview(data['output'], MAX_RESULT_PREVIEW)}[/{style}]")
         elif type_ == "warning":
             console.print(f"[yellow]⚠ {data['text']}[/yellow]")
+        elif type_ == "masked":
+            console.print(f"[dim]  … masked {data['count']} old tool result(s) to save context[/dim]")
+        elif type_ == "compact":
+            console.print(
+                f"[dim]  … context compressed: ~{data['before']} → ~{data['after']} "
+                "tokens (est.)[/dim]"
+            )
         elif type_ == "exit" and data["reason"] != "completed":
             console.print(f"[yellow]{data['text']}[/yellow]")
 
@@ -54,7 +62,11 @@ def run_once(prompt: str, console: Console) -> int:
     agent = Agent(
         config,
         LLMClient(config),
-        ctx=ToolContext(cwd=Path.cwd(), default_timeout=config.timeout),
+        ctx=ToolContext(
+            cwd=Path.cwd(),
+            default_timeout=config.timeout,
+            overflow_dir=Path(tempfile.gettempdir()) / "tenon-overflow",
+        ),
         on_event=make_printer(console),
     )
     try:

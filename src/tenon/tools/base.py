@@ -30,6 +30,7 @@ class ToolContext:
     default_timeout: float = 120.0                        # bash default (s), capped at 600
     read_files: set[Path] = field(default_factory=set)    # read-before-write contract
     todos: list[dict] = field(default_factory=list)       # todo_write state; read by prompts
+    overflow_dir: Path | None = None                      # L1: full bash output spill files
     on_file_write: Callable[[Path], None] | None = None   # checkpoint hook (safety layer)
 
 

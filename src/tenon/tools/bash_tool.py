@@ -14,6 +14,7 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 from .base import Tool, ToolContext, ToolError, ToolResult, resolve_path
 
@@ -26,7 +27,6 @@ _ALWAYS_INTERACTIVE = {
     "watch", "ssh", "telnet", "ftp", "sftp",
 }
 _REPL_WHEN_BARE = {"python", "python3", "node", "irb", "ghci"}
-_REPL_ESCAPE_FLAGS = {"-c", "-e", "-m", "-"}
 
 
 def _command_segments(command: str) -> list[list[str]]:
@@ -43,17 +43,18 @@ def _command_segments(command: str) -> list[list[str]]:
 
 
 def _find_interactive(command: str) -> str | None:
-    """Return the offending program name if the command would block on a TTY."""
+    """Return the offending program name if the command would block on a TTY.
+
+    Only a truly bare interpreter (`python`, `node`, no arguments at all)
+    is treated as interactive — `python3 --version` and friends exit
+    immediately and must pass through.
+    """
     for tokens in _command_segments(command):
         prog = Path(tokens[0]).name
         if prog in _ALWAYS_INTERACTIVE:
             return prog
-        if prog in _REPL_WHEN_BARE:
-            rest = tokens[1:]
-            has_script = any(not t.startswith("-") for t in rest)
-            has_escape = any(t in _REPL_ESCAPE_FLAGS for t in rest)
-            if not has_script and not has_escape:
-                return prog
+        if prog in _REPL_WHEN_BARE and len(tokens) == 1:
+            return prog
     return None
 
 
@@ -146,6 +147,21 @@ class BashTool(Tool):
             parts.append(out)
         if err:
             parts.append(("stderr:\n" + err) if out else err)
-        body = "\n".join(parts) if parts else "(no output)"
-        body, truncated = truncate_middle(body)
+        body_full = "\n".join(parts) if parts else "(no output)"
+        body, truncated = truncate_middle(body_full)
+        if truncated and ctx.overflow_dir is not None:
+            spill = _spill_overflow(ctx.overflow_dir, body_full)
+            if spill is not None:
+                body += f"\n[full output saved to {spill} — grep it or read it in pages]"
         return ToolResult(proc.returncode == 0, body, truncated=truncated)
+
+
+def _spill_overflow(overflow_dir: Path, content: str) -> Path | None:
+    """L1: persist an untruncated tool output so the model can page/grep it."""
+    try:
+        overflow_dir.mkdir(parents=True, exist_ok=True)
+        spill = overflow_dir / f"bash-{uuid4().hex[:8]}.log"
+        spill.write_text(content)
+        return spill
+    except OSError:
+        return None

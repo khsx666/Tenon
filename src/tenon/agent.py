@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Config
+from .context import (
+    COMPRESS_KEEP_TAIL,
+    cap_tool_message,
+    compress,
+    estimate_tokens,
+    mask_old_tool_results,
+)
 from .llm import ContextLengthExceeded, LLMClient
 from .prompts import build_system_prompt
 from .tools import TOOL_REGISTRY, Tool, ToolContext, all_schemas, dispatch
@@ -52,6 +59,7 @@ class Agent:
         self.messages: list[dict] = []
 
     def run(self, task: str) -> str:
+        self.task = task
         self.messages = [
             {"role": "system", "content": build_system_prompt(self.ctx)},
             {"role": "user", "content": task},
@@ -62,14 +70,20 @@ class Agent:
             if self.should_stop():
                 return self._finish("interrupted", "Stopped by user interrupt.")
             self._refresh_system_prompt()
+            self._manage_context()
             try:
                 resp = self.llm.chat(self.messages, tools=self.schemas)
             except ContextLengthExceeded:
-                # M4 wires real compression behind this branch.
-                return self._finish(
-                    "context_overflow",
-                    "Stopped: the conversation exceeded the model's context window.",
-                )
+                # Recovery path: compress aggressively and keep going.
+                try:
+                    self._compress(keep_tail=4)
+                    continue
+                except Exception:
+                    return self._finish(
+                        "context_overflow",
+                        "Stopped: the conversation exceeded the model's context "
+                        "window and could not be compressed further.",
+                    )
             self.messages.append(resp.as_message())
             if resp.text:
                 self.on_event("text", text=resp.text)
@@ -100,7 +114,7 @@ class Agent:
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
-                    "content": result.output,
+                    "content": cap_tool_message(result.output),  # L1 hard cap
                 })
                 self.on_event(
                     "tool_result",
@@ -118,6 +132,23 @@ class Agent:
         """Rebuild the system message in place; only its dynamic tail changes,
         keeping the cached prefix stable."""
         self.messages[0] = {"role": "system", "content": build_system_prompt(self.ctx)}
+
+    def _manage_context(self) -> None:
+        """L2 every turn; L3 when the estimated size crosses the budget."""
+        masked = mask_old_tool_results(self.messages)
+        if masked:
+            self.on_event("masked", count=masked)
+        if estimate_tokens(self.messages) > self.config.context_token_budget:
+            self._compress(keep_tail=COMPRESS_KEEP_TAIL)
+
+    def _compress(self, keep_tail: int) -> None:
+        before = estimate_tokens(self.messages)
+        self.messages = compress(self.messages, self.llm, self.task, keep_tail=keep_tail)
+        self.on_event(
+            "compact",
+            before=before,
+            after=estimate_tokens(self.messages),
+        )
 
     def _finish(self, reason: str, text: str) -> str:
         self.on_event("exit", reason=reason, text=text)
