@@ -22,7 +22,7 @@ from .context import (
 )
 from .llm import ContextLengthExceeded, LLMClient
 from .prompts import build_system_prompt
-from .tools import TOOL_REGISTRY, Tool, ToolContext, all_schemas, dispatch
+from .tools import TOOL_REGISTRY, Tool, ToolContext, ToolResult, all_schemas, dispatch
 
 MAX_LOOP_REPEATS = 3  # identical tool-call batches tolerated before intervening
 
@@ -48,6 +48,8 @@ class Agent:
         ctx: ToolContext | None = None,
         on_event: Callable[..., None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        safety=None,    # SafetyLayer, duck-typed; None = no approval layer
+        session=None,   # SessionLogger, duck-typed; None = no persistence
     ):
         self.config = config
         self.llm = llm
@@ -56,14 +58,21 @@ class Agent:
         self.ctx = ctx or ToolContext(cwd=Path.cwd(), default_timeout=config.timeout)
         self.on_event = on_event or (lambda type_, **data: None)
         self.should_stop = should_stop or (lambda: False)
+        self.safety = safety
+        self.session = session
         self.messages: list[dict] = []
 
-    def run(self, task: str) -> str:
+    def run(self, task: str, messages: list[dict] | None = None) -> str:
         self.task = task
-        self.messages = [
-            {"role": "system", "content": build_system_prompt(self.ctx)},
-            {"role": "user", "content": task},
-        ]
+        if messages is None:
+            self.messages = []
+            self._append({"role": "system", "content": build_system_prompt(self.ctx)})
+            self._append({"role": "user", "content": task})
+        else:
+            self.messages = messages  # resumed session: replayed verbatim
+            self._append({"role": "user", "content": task})
+        if self.session is not None:
+            self.session.log_meta(event="task_start", task=task)
         last_fingerprint: str | None = None
         repeats = 0
         for _turn in range(self.config.max_turns):
@@ -84,7 +93,7 @@ class Agent:
                         "Stopped: the conversation exceeded the model's context "
                         "window and could not be compressed further.",
                     )
-            self.messages.append(resp.as_message())
+            self._append(resp.as_message())
             if resp.text:
                 self.on_event("text", text=resp.text)
             if not resp.tool_calls:
@@ -105,13 +114,18 @@ class Agent:
                     "in a row without progress. Take a different approach, or explain "
                     "what is blocking you."
                 )
-                self.messages.append({"role": "user", "content": f"[loop detector] {warning}"})
+                self._append({"role": "user", "content": f"[loop detector] {warning}"})
                 self.on_event("warning", text=warning)
 
             for call in resp.tool_calls:
                 self.on_event("tool_call", name=call.name, args=call.arguments_json)
-                result = dispatch(self.registry, call.name, call.arguments_json, self.ctx)
-                self.messages.append({
+                verdict = self.safety.check(call.name, call.arguments_json) if self.safety else None
+                if verdict is None or verdict.allowed:
+                    result = dispatch(self.registry, call.name, call.arguments_json, self.ctx)
+                else:
+                    result = ToolResult(False, f"error=permission: {verdict.reason}")
+                    self.on_event("permission", name=call.name, reason=verdict.reason)
+                self._append({
                     "role": "tool",
                     "tool_call_id": call.id,
                     "content": cap_tool_message(result.output),  # L1 hard cap
@@ -133,6 +147,12 @@ class Agent:
         keeping the cached prefix stable."""
         self.messages[0] = {"role": "system", "content": build_system_prompt(self.ctx)}
 
+    def _append(self, message: dict) -> None:
+        """Append to the conversation and the session log, atomically enough."""
+        self.messages.append(message)
+        if self.session is not None:
+            self.session.log_message(message)
+
     def _manage_context(self) -> None:
         """L2 every turn; L3 when the estimated size crosses the budget."""
         masked = mask_old_tool_results(self.messages)
@@ -151,5 +171,7 @@ class Agent:
         )
 
     def _finish(self, reason: str, text: str) -> str:
+        if self.session is not None:
+            self.session.log_meta(event="exit", reason=reason)
         self.on_event("exit", reason=reason, text=text)
         return text
