@@ -1,0 +1,7 @@
+# 运行时依赖：只允许模型厂商 API 客户端 + 终端 UI 库
+openai>=1.0        # LLM API 客户端（Chat Completions 协议）
+rich>=13.0         # 终端渲染（Markdown / 配色 / spinner）
+prompt_toolkit>=3.0  # REPL 输入（历史 / 快捷键 / 多行）
+
+# 开发依赖
+# pytest>=8.0      # 单元测试（pip install pytest）

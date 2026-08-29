@@ -1,0 +1,16 @@
+[project]
+name = "tenon"
+version = "0.1.0"
+description = "Tenon: a minimal, from-scratch coding agent (no agent frameworks)"
+requires-python = ">=3.10"
+dependencies = ["openai>=1.0", "rich>=13.0", "prompt_toolkit>=3.0"]
+
+[project.scripts]
+tenon = "tenon.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

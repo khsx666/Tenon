@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+
+# Local design notes (kept out of the repo)
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime artifacts
+.sessions/
+.checkpoints/
+
+# OS / editor noise
+.DS_Store
