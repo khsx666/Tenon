@@ -56,9 +56,10 @@ def estimate_tokens(messages: list[dict]) -> int:
     """Rough chars/4 estimate over everything that goes on the wire."""
     chars = 0
     for m in messages:
-        content = m.get("content")
-        if isinstance(content, str):
-            chars += len(content)
+        for key in ("content", "reasoning_content"):  # both go on the wire
+            value = m.get(key)
+            if isinstance(value, str):
+                chars += len(value)
         if m.get("tool_calls"):
             chars += len(json.dumps(m["tool_calls"]))
     return chars // 4

@@ -159,7 +159,10 @@ class Agent:
         if masked:
             self.on_event("masked", count=masked)
         if estimate_tokens(self.messages) > self.config.context_token_budget:
-            self._compress(keep_tail=COMPRESS_KEEP_TAIL)
+            try:
+                self._compress(keep_tail=COMPRESS_KEEP_TAIL)
+            except ValueError:
+                pass  # nothing meaningful to compress yet
 
     def _compress(self, keep_tail: int) -> None:
         before = estimate_tokens(self.messages)

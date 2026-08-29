@@ -27,6 +27,7 @@ parsing, loop termination and error handling are all hand-written on top of the
 ```bash
 pip install -r requirements.txt
 cp .env.example .env   # fill in your OpenAI-compatible endpoint credentials
+pip install pytest     # only needed to run the test suite (tests/)
 ```
 
 ## Usage
