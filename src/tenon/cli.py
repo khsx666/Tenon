@@ -1,23 +1,30 @@
-"""Command-line interface.
+"""Command-line interface: interactive REPL + non-interactive -p mode.
 
-M3 delivered the non-interactive `-p` one-shot mode; the full interactive
-REPL (prompt_toolkit, interrupts, slash commands) arrives in M6.
+Input via prompt_toolkit (history), output via rich. Interrupt layers:
+Ctrl+C during a turn aborts the turn but keeps the session; Ctrl+C twice
+at the prompt (or Ctrl+D) exits. Slash commands: /help /mode /undo /cost
+/compact /quit.
 """
 from __future__ import annotations
 
 import argparse
 import tempfile
+import time
 from pathlib import Path
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.prompt import Prompt
 
 from .agent import Agent
 from .checkpoint import Checkpointer
 from .config import ConfigError, load_config
+from .context import COMPRESS_KEEP_TAIL
 from .llm import LLMClient
 from .safety import PermissionMode, SafetyLayer
-from .session import SessionLogger
+from .session import SESSIONS_DIR, SessionLogger
 from .tools import ToolContext
 
 MAX_ARG_PREVIEW = 120
@@ -58,12 +65,24 @@ def make_printer(console: Console):
     return on_event
 
 
+def make_confirm(console: Console):
+    """Interactive confirmation card: y / N / a(lways this session)."""
+
+    def confirm(prompt: str) -> str:
+        console.print(f"[yellow]{prompt}[/yellow]")
+        answer = Prompt.ask("[bold]allow? y/N/a[/bold]", default="n", console=console)
+        answer = answer.strip().lower()
+        return answer if answer in ("y", "a") else "n"
+
+    return confirm
+
+
 def build_agent(
     console: Console,
     mode_text: str,
     resume: bool,
     confirm_fn=None,
-) -> tuple[Agent, SessionLogger, list[dict] | None]:
+) -> tuple[Agent, SessionLogger, Checkpointer, list[dict] | None]:
     """Wire config → ctx/safety/checkpoint/session → Agent for one workspace."""
     config = load_config()
     workspace = Path.cwd()
@@ -79,7 +98,7 @@ def build_agent(
     if resume:
         latest = SessionLogger.latest(workspace)
         if latest is None:
-            raise ConfigError(f"no session log found under {workspace}/.sessions")
+            raise ConfigError(f"no session log found under {workspace}/{SESSIONS_DIR}")
         session = SessionLogger(workspace, resume_from=latest)
         messages = SessionLogger.replay(latest)
         console.print(f"[dim]resumed {latest.name}: {len(messages)} messages[/dim]")
@@ -93,12 +112,12 @@ def build_agent(
         safety=safety,
         session=session,
     )
-    return agent, session, messages
+    return agent, session, checkpointer, messages
 
 
 def run_once(prompt: str, console: Console, mode_text: str, resume: bool) -> int:
     try:
-        agent, session, messages = build_agent(console, mode_text, resume)
+        agent, session, _checkpointer, messages = build_agent(console, mode_text, resume)
     except (ConfigError, ValueError) as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
         return 2
@@ -112,6 +131,107 @@ def run_once(prompt: str, console: Console, mode_text: str, resume: bool) -> int
         f"\n[dim]tokens: {usage.prompt_tokens} prompt / {usage.completion_tokens} "
         f"completion ({usage.calls} API calls) · session log: {session.path}[/dim]"
     )
+    return 0
+
+
+_HELP = """\
+Commands:
+  /help            show this help
+  /mode [MODE]     show or switch permission mode (read-only | ask | auto-edit | auto)
+  /undo            restore files changed by this session's file edits
+                   (bash side effects cannot be rolled back)
+  /cost            show token usage so far
+  /compact         compress older context now
+  /quit            exit
+Anything else is sent to the agent as a task.
+"""
+
+
+def handle_command(
+    text: str,
+    agent: Agent,
+    checkpointer: Checkpointer,
+    console: Console,
+) -> bool:
+    """Handle a slash command; returns True when the REPL should exit."""
+    cmd, _, arg = text.partition(" ")
+    cmd, arg = cmd.lower(), arg.strip()
+    if cmd == "/quit":
+        return True
+    if cmd == "/help":
+        console.print(_HELP)
+    elif cmd == "/mode":
+        if not arg:
+            console.print(f"permission mode: {agent.safety.mode.value}")
+        else:
+            try:
+                agent.safety.mode = PermissionMode.parse(arg)
+                console.print(f"permission mode → {arg}")
+            except ValueError as exc:
+                console.print(f"[red]{exc}[/red]")
+    elif cmd == "/undo":
+        actions = checkpointer.undo()
+        console.print("\n".join(actions) if actions else "nothing to undo")
+        console.print("[dim]note: bash side effects cannot be rolled back[/dim]")
+    elif cmd == "/cost":
+        u = agent.llm.usage
+        console.print(
+            f"tokens: {u.prompt_tokens} prompt / {u.completion_tokens} completion "
+            f"({u.calls} API calls)"
+        )
+    elif cmd == "/compact":
+        try:
+            agent._compress(keep_tail=COMPRESS_KEEP_TAIL)
+        except ValueError:
+            console.print("nothing meaningful to compress yet")
+    else:
+        console.print(f"[red]unknown command {cmd!r}; /help for commands[/red]")
+    return False
+
+
+def run_repl(console: Console, mode_text: str, resume: bool) -> int:
+    try:
+        agent, session, checkpointer, messages = build_agent(
+            console, mode_text, resume, confirm_fn=make_confirm(console)
+        )
+    except (ConfigError, ValueError) as exc:
+        console.print(f"[red]Configuration error:[/red] {exc}")
+        return 2
+    history_dir = Path.cwd() / SESSIONS_DIR
+    history_dir.mkdir(exist_ok=True)
+    prompt_session: PromptSession = PromptSession(
+        history=FileHistory(str(history_dir / "repl-history.txt"))
+    )
+    console.print(
+        f"[bold]tenon[/bold] interactive · mode={agent.safety.mode.value} · "
+        "/help for commands · Ctrl+C interrupts a turn · Ctrl+D exits"
+    )
+    last_interrupt = 0.0
+    while True:
+        try:
+            text = prompt_session.prompt("tenon> ")
+        except KeyboardInterrupt:
+            now = time.monotonic()
+            if now - last_interrupt < 1.5:
+                break
+            last_interrupt = now
+            console.print("[dim]press Ctrl+C again to exit (Ctrl+D also works)[/dim]")
+            continue
+        except EOFError:
+            break
+        text = text.strip()
+        if not text:
+            continue
+        if text.startswith("/"):
+            if handle_command(text, agent, checkpointer, console):
+                break
+            continue
+        try:
+            agent.run(text, messages=messages)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Turn interrupted — session kept.[/yellow]")
+        messages = agent.messages
+    console.print(f"[dim]session log: {session.path}[/dim]")
     return 0
 
 
@@ -133,10 +253,6 @@ def main(argv: list[str] | None = None) -> int:
 
         console.print(__version__)
         return 0
-    if args.resume and not args.prompt:
-        console.print("[red]-c requires -p for now (interactive resume arrives with the REPL).[/red]")
-        return 2
     if args.prompt:
         return run_once(args.prompt, console, args.mode or "auto", args.resume)
-    console.print('Interactive REPL arrives in a later milestone; use -p "task" for now.')
-    return 0
+    return run_repl(console, args.mode or "ask", args.resume)
