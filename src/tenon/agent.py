@@ -75,72 +75,101 @@ class Agent:
             self.session.log_meta(event="task_start", task=task)
         last_fingerprint: str | None = None
         repeats = 0
-        for _turn in range(self.config.max_turns):
-            if self.should_stop():
-                return self._finish("interrupted", "Stopped by user interrupt.")
-            self._refresh_system_prompt()
-            self._manage_context()
-            try:
-                resp = self.llm.chat(self.messages, tools=self.schemas)
-            except ContextLengthExceeded:
-                # Recovery path: compress aggressively and keep going.
+        try:
+            for _turn in range(self.config.max_turns):
+                if self.should_stop():
+                    return self._finish("interrupted", "Stopped by user interrupt.")
+                self._refresh_system_prompt()
+                self._manage_context()
                 try:
-                    self._compress(keep_tail=4)
-                    continue
-                except Exception:
-                    return self._finish(
-                        "context_overflow",
-                        "Stopped: the conversation exceeded the model's context "
-                        "window and could not be compressed further.",
-                    )
-            self._append(resp.as_message())
-            if resp.text:
-                self.on_event("text", text=resp.text)
-            if not resp.tool_calls:
-                return self._finish("completed", resp.text)
+                    resp = self.llm.chat(self.messages, tools=self.schemas)
+                except ContextLengthExceeded:
+                    # Recovery path: compress aggressively and keep going.
+                    try:
+                        self._compress(keep_tail=4)
+                        continue
+                    except Exception:
+                        return self._finish(
+                            "context_overflow",
+                            "Stopped: the conversation exceeded the model's context "
+                            "window and could not be compressed further.",
+                        )
+                self._append(resp.as_message())
+                if resp.text:
+                    self.on_event("text", text=resp.text)
+                if not resp.tool_calls:
+                    return self._finish("completed", resp.text)
 
-            fingerprint = _fingerprint(resp.tool_calls)
-            repeats = repeats + 1 if fingerprint == last_fingerprint else 0
-            last_fingerprint = fingerprint
-            if repeats >= MAX_LOOP_REPEATS:
-                if repeats >= MAX_LOOP_REPEATS + 2:
-                    return self._finish(
-                        "loop_detected",
-                        "Stopped: the model repeated the same tool call(s) "
-                        "without making progress.",
+                fingerprint = _fingerprint(resp.tool_calls)
+                repeats = repeats + 1 if fingerprint == last_fingerprint else 0
+                last_fingerprint = fingerprint
+                if repeats >= MAX_LOOP_REPEATS:
+                    if repeats >= MAX_LOOP_REPEATS + 2:
+                        return self._finish(
+                            "loop_detected",
+                            "Stopped: the model repeated the same tool call(s) "
+                            "without making progress.",
+                        )
+                    warning = (
+                        f"You have repeated the exact same tool call(s) {repeats + 1} times "
+                        "in a row without progress. Take a different approach, or explain "
+                        "what is blocking you."
                     )
-                warning = (
-                    f"You have repeated the exact same tool call(s) {repeats + 1} times "
-                    "in a row without progress. Take a different approach, or explain "
-                    "what is blocking you."
-                )
-                self._append({"role": "user", "content": f"[loop detector] {warning}"})
-                self.on_event("warning", text=warning)
+                    self._append({"role": "user", "content": f"[loop detector] {warning}"})
+                    self.on_event("warning", text=warning)
 
-            for call in resp.tool_calls:
-                self.on_event("tool_call", name=call.name, args=call.arguments_json)
-                verdict = self.safety.check(call.name, call.arguments_json) if self.safety else None
-                if verdict is None or verdict.allowed:
-                    result = dispatch(self.registry, call.name, call.arguments_json, self.ctx)
-                else:
-                    result = ToolResult(False, f"error=permission: {verdict.reason}")
-                    self.on_event("permission", name=call.name, reason=verdict.reason)
-                self._append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": cap_tool_message(result.output),  # L1 hard cap
-                })
+                for call in resp.tool_calls:
+                    self.on_event("tool_call", name=call.name, args=call.arguments_json)
+                    verdict = self.safety.check(call.name, call.arguments_json) if self.safety else None
+                    if verdict is None or verdict.allowed:
+                        result = dispatch(self.registry, call.name, call.arguments_json, self.ctx)
+                    else:
+                        result = ToolResult(False, f"error=permission: {verdict.reason}")
+                        self.on_event("permission", name=call.name, reason=verdict.reason)
+                    self._append({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": cap_tool_message(result.output),  # L1 hard cap
+                    })
+                    self.on_event(
+                        "tool_result",
+                        name=call.name,
+                        ok=result.ok,
+                        output=result.output,
+                        truncated=result.truncated,
+                    )
+        except KeyboardInterrupt:
+            # A hard interrupt mid-turn can leave assistant tool_calls without
+            # their results; stub them so the history stays protocol-valid.
+            repaired = self._repair_pending_tool_calls()
+            if repaired:
                 self.on_event(
-                    "tool_result",
-                    name=call.name,
-                    ok=result.ok,
-                    output=result.output,
-                    truncated=result.truncated,
+                    "warning",
+                    text=f"marked {repaired} pending tool call(s) as interrupted",
                 )
+            raise
         return self._finish(
             "max_turns",
             f"Stopped: reached the max_turns limit ({self.config.max_turns}).",
         )
+
+    def _repair_pending_tool_calls(self) -> int:
+        """Stub results for tool calls that never got one (e.g. interrupt hit
+        mid-dispatch). Idempotent; returns how many were stubbed."""
+        answered = {m["tool_call_id"] for m in self.messages if m.get("role") == "tool"}
+        pending = [
+            tc["id"]
+            for m in self.messages
+            for tc in (m.get("tool_calls") or [])
+            if tc.get("id") not in answered
+        ]
+        for call_id in pending:
+            self._append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": "[interrupted: this tool call was cancelled before producing a result]",
+            })
+        return len(pending)
 
     def _refresh_system_prompt(self) -> None:
         """Rebuild the system message in place; only its dynamic tail changes,

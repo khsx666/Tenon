@@ -4,7 +4,7 @@ import pytest
 from tenon.agent import Agent
 from tenon.config import Config
 from tenon.llm import AssistantMessage, ToolCall
-from tenon.tools import ToolContext
+from tenon.tools import TOOL_REGISTRY, Tool, ToolContext
 
 
 def text_msg(text: str) -> AssistantMessage:
@@ -113,3 +113,42 @@ def test_interrupt_hook_stops_loop(config, tmp_path):
                   should_stop=lambda: True)
     assert "interrupt" in agent.run("task").lower()
     assert len(llm.seen) == 0
+
+
+# ---------------- interrupt protocol repair ----------------
+
+class _InterruptTool(Tool):
+    name = "interrupt_me"
+    description = "raises KeyboardInterrupt mid-run"
+    parameters = {"type": "object", "properties": {}}
+
+    def run(self, args, ctx):
+        raise KeyboardInterrupt
+
+
+def test_interrupt_stubs_unanswered_tool_calls(config, tmp_path):
+    calls = [
+        ToolCall(id="c1", name="bash", arguments_json='{"command": "echo done"}'),
+        ToolCall(id="c2", name="interrupt_me", arguments_json="{}"),
+    ]
+    llm = MockLLM([tool_msg(calls)])
+    registry = {**TOOL_REGISTRY, "interrupt_me": _InterruptTool()}
+    agent = Agent(config, llm, registry=registry, ctx=ToolContext(cwd=tmp_path))
+
+    with pytest.raises(KeyboardInterrupt):
+        agent.run("task")
+
+    # history stays protocol-valid: every tool_call got a paired result
+    answered = {m["tool_call_id"] for m in agent.messages if m["role"] == "tool"}
+    for m in agent.messages:
+        for tc in m.get("tool_calls") or []:
+            assert tc["id"] in answered
+    # c1 executed normally; c2 was stubbed as interrupted
+    assert any(m["role"] == "tool" and m["tool_call_id"] == "c1" and "done" in m["content"]
+               for m in agent.messages)
+    stubs = [m for m in agent.messages
+             if m["role"] == "tool" and "interrupted" in m["content"]]
+    assert len(stubs) == 1 and stubs[0]["tool_call_id"] == "c2"
+
+    # repair is idempotent
+    assert agent._repair_pending_tool_calls() == 0
