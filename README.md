@@ -10,18 +10,7 @@
 
 ## 它是怎么工作的
 
-```
-用户 ←→ cli.py（REPL / -p 单发；rich 渲染；确认卡）
-          │
-          ▼
-      agent.py —— ReAct 循环：调 LLM → 分发工具 → 结果配对回写 → 终止判断
-       ┌──────┼──────────┬───────────┐
-       ▼      ▼          ▼           ▼
-   llm.py  tools/    context.py  safety.py
-  重试与   7 个本地   截断 /      权限模式 +
-  解析     工具       遮蔽 /      危险命令
-                     摘要压缩     fail-closed 门
-```
+![Tenon 整体架构](assets/architecture.svg)
 
 每一轮的精确顺序：检查中断标志 → 重建 system prompt（静态前缀保持字节级稳定）→
 遮蔽过期的工具结果 → 带全部工具 schema 调 LLM → assistant 消息**原样**入史 →
@@ -31,7 +20,8 @@ dispatch 容错链执行，每个结果按 `tool_call_id` 配对回写。
 ## 特性
 
 - **手写 ReAct 单循环 + 多层终止**：主出口（模型停止调用工具）、最大轮次、
-  重复动作指纹熔断、用户中断、上下文溢出时压缩恢复——全部是确定性代码兜底
+  重复动作指纹熔断、用户中断——全部是确定性代码兜底；上下文溢出单独走
+  "压缩 → 重试当前轮"的恢复通道
 - **7 个精心设计的本地工具**：read_file / write_file / edit（精确字符串替换）/
   bash / grep / glob / todo_write
 - **上下文三级防御**：输出截断（超长溢出入文件）→ 旧结果遮蔽 → LLM 摘要压缩；
@@ -114,7 +104,7 @@ Ctrl+C 中断当前轮、会话保留；Ctrl+D 退出。每次运行都会在 `.
 ## 测试
 
 ```bash
-pytest tests/    # 60 个单元测试：工具、容错链、agent 循环、上下文、安全
+pytest tests/    # 61 个单元测试：工具、容错链、agent 循环、上下文、安全
 ```
 
 agent 循环的测试使用脚本化的 mock LLM，整个套件完全离线可跑。
@@ -162,18 +152,7 @@ parsing, loop termination and error handling are all hand-written on top of the
 
 ## How it works
 
-```
-user ←→ cli.py (REPL / -p one-shot; rich rendering; confirmation cards)
-          │
-          ▼
-      agent.py — ReAct loop: LLM call → tool dispatch → result pairing → termination
-       ┌──────┼──────────┬───────────┐
-       ▼      ▼          ▼           ▼
-   llm.py  tools/    context.py  safety.py
-  retry &  7 local   truncate /  permission
-  parsing  tools     mask /      modes &
-                     summarize   fail-closed gate
-```
+![Tenon architecture](assets/architecture.svg)
 
 Each turn, in order: check the interrupt flag → rebuild the system prompt (static
 prefix stays byte-stable) → mask stale tool results → call the LLM with all tool
@@ -184,9 +163,9 @@ result back with its `tool_call_id`.
 
 ## Features
 
-- **Hand-rolled ReAct agent loop** with multi-layer termination: no-tool-call exit,
-  max turns, repeated-action fingerprint circuit breaker, user interrupt, and
-  context-overflow recovery via compression
+- **Hand-rolled ReAct agent loop** with multi-layer deterministic termination:
+  no-tool-call exit, max turns, repeated-action fingerprint circuit breaker, user
+  interrupt — plus a separate recovery lane for context overflow (compress & retry)
 - **7 carefully-designed local tools**: read_file / write_file / edit
   (exact string replacement) / bash / grep / glob / todo_write
 - **Three-layer context management**: output truncation with overflow files →
@@ -279,7 +258,7 @@ under `.sessions/` and shows token usage on exit.
 ## Testing
 
 ```bash
-pytest tests/    # 60 unit tests: tools, dispatch chain, agent loop, context, safety
+pytest tests/    # 61 unit tests: tools, dispatch chain, agent loop, context, safety
 ```
 
 The agent-loop tests use a scripted mock LLM, so the suite runs fully offline.

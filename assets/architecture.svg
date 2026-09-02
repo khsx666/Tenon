@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="700" viewBox="0 0 960 700">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="75%">
+      <stop offset="0%" stop-color="#161c26"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </radialGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/>
+    </marker>
+    <style>
+      text { font-family: 'Noto Sans CJK SC','PingFang SC','Microsoft YaHei',sans-serif; }
+      .t   { fill:#e6edf3; font-weight:700; }
+      .b   { fill:#c9d1d9; }
+      .dim { fill:#8b949e; }
+    </style>
+  </defs>
+
+  <rect width="960" height="700" fill="url(#bg)" rx="16"/>
+
+  <!-- title -->
+  <text x="480" y="44" text-anchor="middle" class="t" font-size="26">Tenon · 整体架构</text>
+  <text x="480" y="68" text-anchor="middle" class="dim" font-size="13">命令行编程智能体 · ReAct 循环 + 本地工具 + 上下文管理 + 安全层</text>
+
+  <!-- user -->
+  <rect x="370" y="88" width="220" height="46" rx="12" fill="#8b949e" fill-opacity="0.13" stroke="#8b949e" stroke-width="1.6"/>
+  <text x="480" y="117" text-anchor="middle" class="t" font-size="16">用户 User</text>
+
+  <line x1="480" y1="136" x2="480" y2="152" stroke="#8b949e" stroke-width="1.8" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <!-- cli -->
+  <rect x="330" y="156" width="300" height="64" rx="12" fill="#58a6ff" fill-opacity="0.13" stroke="#58a6ff" stroke-width="2"/>
+  <text x="480" y="183" text-anchor="middle" class="t" font-size="16">cli.py · 终端交互</text>
+  <text x="480" y="204" text-anchor="middle" class="b" font-size="12">REPL · -p 单发 · 确认卡 · slash 命令</text>
+
+  <line x1="480" y1="222" x2="480" y2="242" stroke="#8b949e" stroke-width="1.8" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <!-- agent core -->
+  <rect x="290" y="244" width="380" height="126" rx="14" fill="#bc8cff" fill-opacity="0.16" stroke="#bc8cff" stroke-width="2.4"/>
+  <text x="480" y="274" text-anchor="middle" class="t" font-size="17">agent.py · ReAct 循环（核心）</text>
+  <text x="480" y="298" text-anchor="middle" class="b" font-size="12.5">调 LLM → 分发工具 → 结果按 tool_call_id 配对回写</text>
+  <text x="480" y="320" text-anchor="middle" fill="#d2a8ff" font-size="12">终止（确定性兜底）：主出口 · 轮次上限 · 重复熔断 · 中断</text>
+  <text x="480" y="342" text-anchor="middle" fill="#d2a8ff" font-size="12">恢复通道：上下文溢出 → 摘要压缩 → 重试当前轮</text>
+
+  <!-- side module: prompts -->
+  <rect x="56" y="258" width="194" height="72" rx="10" fill="#8b949e" fill-opacity="0.08" stroke="#8b949e" stroke-width="1.4"/>
+  <line x1="250" y1="294" x2="288" y2="294" stroke="#8b949e" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="153" y="282" text-anchor="middle" class="t" font-size="14">prompts.py</text>
+  <text x="153" y="302" text-anchor="middle" class="b" font-size="11">system prompt 分层拼装</text>
+  <text x="153" y="318" text-anchor="middle" class="b" font-size="11">静态前置 · 动态后置</text>
+
+  <!-- side module: config -->
+  <rect x="710" y="258" width="194" height="72" rx="10" fill="#8b949e" fill-opacity="0.08" stroke="#8b949e" stroke-width="1.4"/>
+  <line x1="710" y1="294" x2="672" y2="294" stroke="#8b949e" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="807" y="282" text-anchor="middle" class="t" font-size="14">config.py</text>
+  <text x="807" y="302" text-anchor="middle" class="b" font-size="11">配置加载</text>
+  <text x="807" y="318" text-anchor="middle" class="b" font-size="11">环境变量优先 · .env 兜底</text>
+
+  <!-- bus -->
+  <line x1="480" y1="370" x2="480" y2="398" stroke="#8b949e" stroke-width="1.8"/>
+  <line x1="150" y1="398" x2="750" y2="398" stroke="#8b949e" stroke-width="1.8"/>
+  <line x1="150" y1="398" x2="150" y2="416" stroke="#8b949e" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <line x1="350" y1="398" x2="350" y2="416" stroke="#8b949e" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <line x1="550" y1="398" x2="550" y2="416" stroke="#8b949e" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <line x1="750" y1="398" x2="750" y2="416" stroke="#8b949e" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- pillar: llm -->
+  <rect x="50" y="418" width="200" height="92" rx="12" fill="#d29922" fill-opacity="0.13" stroke="#d29922" stroke-width="2"/>
+  <text x="150" y="447" text-anchor="middle" class="t" font-size="15">llm.py · LLM 客户端</text>
+  <text x="150" y="471" text-anchor="middle" class="b" font-size="11.5">重试退避 · 输出解析</text>
+  <text x="150" y="490" text-anchor="middle" class="b" font-size="11.5">token 用量统计</text>
+
+  <!-- pillar: tools -->
+  <rect x="270" y="418" width="200" height="92" rx="12" fill="#3fb950" fill-opacity="0.13" stroke="#3fb950" stroke-width="2"/>
+  <text x="370" y="447" text-anchor="middle" class="t" font-size="15">tools/ · 七个本地工具</text>
+  <text x="370" y="471" text-anchor="middle" class="b" font-size="11.5">read · write · edit · bash</text>
+  <text x="370" y="490" text-anchor="middle" class="b" font-size="11.5">grep · glob · todo_write</text>
+
+  <!-- pillar: context -->
+  <rect x="490" y="418" width="200" height="92" rx="12" fill="#39c5cf" fill-opacity="0.13" stroke="#39c5cf" stroke-width="2"/>
+  <text x="590" y="447" text-anchor="middle" class="t" font-size="15">context.py · 上下文管理</text>
+  <text x="590" y="471" text-anchor="middle" class="b" font-size="11.5">截断 → 遮蔽 → 摘要压缩</text>
+  <text x="590" y="490" text-anchor="middle" class="b" font-size="11.5">append-only · 缓存友好</text>
+
+  <!-- pillar: safety -->
+  <rect x="710" y="418" width="200" height="92" rx="12" fill="#f85149" fill-opacity="0.13" stroke="#f85149" stroke-width="2"/>
+  <text x="810" y="447" text-anchor="middle" class="t" font-size="15">safety.py · 安全层</text>
+  <text x="810" y="471" text-anchor="middle" class="b" font-size="11.5">权限四档 · 敏感路径 deny</text>
+  <text x="810" y="490" text-anchor="middle" class="b" font-size="11.5">危险命令 fail-closed</text>
+
+  <!-- confirmation callback: safety -> cli -->
+  <path d="M 870 418 V 186 H 634" fill="none" stroke="#f85149" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="752" y="178" text-anchor="middle" class="dim" font-size="11">确认回调（y/N/a）</text>
+
+  <!-- snapshot trigger: tools -> checkpoint -->
+  <path d="M 370 510 L 690 568" fill="none" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="500" y="524" text-anchor="middle" class="dim" font-size="11">写入前快照</text>
+
+  <!-- bottom bar -->
+  <rect x="50" y="570" width="860" height="64" rx="12" fill="#8b949e" fill-opacity="0.08" stroke="#8b949e" stroke-width="1.6"/>
+  <line x1="480" y1="582" x2="480" y2="622" stroke="#8b949e" stroke-opacity="0.4" stroke-width="1.4"/>
+  <text x="265" y="597" text-anchor="middle" class="t" font-size="14">session.py · 会话持久化</text>
+  <text x="265" y="617" text-anchor="middle" class="b" font-size="11.5">append-only JSONL · -c 断点恢复</text>
+  <text x="695" y="597" text-anchor="middle" class="t" font-size="14">checkpoint.py · 可恢复性</text>
+  <text x="695" y="617" text-anchor="middle" class="b" font-size="11.5">编辑前快照 · /undo 回滚</text>
+
+  <!-- quality note -->
+  <rect x="50" y="652" width="860" height="36" rx="10" fill="#8b949e" fill-opacity="0.05" stroke="#8b949e" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="480" y="675" text-anchor="middle" class="b" font-size="12">质量保障：tests/ 61 个单元测试（mock LLM，离线）＋ 演示任务独立验收脚本（agent 不可见）</text>
+</svg>
